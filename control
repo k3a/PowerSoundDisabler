@@ -1,0 +1,9 @@
+Package: me.k3a.powersounddisabler
+Name: PowerSoundDisabler
+Depends: mobilesubstrate
+Version: 1.1.1
+Architecture: iphoneos-arm
+Description: A simple MS tweak disabling sound and vibration after respringing or connecting via USB.
+Maintainer: K3A
+Author: K3A
+Section: Tweaks
