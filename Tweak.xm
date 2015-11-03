@@ -1,70 +1,66 @@
 #import <AudioToolbox/AudioToolbox.h>
 #import <substrate.h>
 
-#include <sys/time.h>
+#include <dlfcn.h>
+#include <dispatch/dispatch.h>
 
 static NSDictionary* s_settings = nil;
 
-%hook SBUIController
-
-typedef unsigned int U32;
-
-static U32 absTime = 0;
-static U32 GetTimestampMsec()
-{
-	timeval time;
-	gettimeofday(&time, NULL);
-	
-	U32 elapsed_seconds  = (U32)time.tv_sec;
-	U32 elapsed_useconds = time.tv_usec;
-	
-	return elapsed_seconds * 1000 + elapsed_useconds/1000;	
-}
-
 static BOOL is_disabled(unsigned snd)
 {
-	if (!s_settings) return FALSE;
-		
-	NSNumber* num = [s_settings objectForKey:[NSString stringWithFormat:@"%u", snd]];
+	NSNumber* num = [s_settings objectForKey:[[NSNumber numberWithInt:snd] stringValue]];
+	if (!num && snd == 1106) num = [NSNumber numberWithBool:FALSE];
 	return num && [num boolValue] == FALSE;
 }
 
+static BOOL should_play(SystemSoundID sound)
+{
+	if (sound == 1106 && is_disabled(1106)) 
+	{
+		NSLog(@"SystemSoundDisabler: Ignoring power sound using 2nd method");
+	    return FALSE;
+	}
+	else if (is_disabled(sound))
+	{
+		NSLog(@"SystemSoundDisabler: Ignoring sound id %u", (unsigned)sound);
+		return FALSE;
+	}
+	return TRUE;
+}
+
+%hook SBUIController
 - (void)_indicateConnectedToPower {
 
 	if (is_disabled(1106))
 	{
-		NSLog(@"SystemSoundDisabler: Ignoring power sound...");
-		absTime = GetTimestampMsec();
+		NSLog(@"SystemSoundDisabler: Ignoring power sound using 1st method");
 		return;
 	}
 
 	%orig;
 }
-
 %end
 
-void (*original_AudioServicesPlaySystemSound) (SystemSoundID inSystemSoundID);
+void AudioServicesPlaySystemSoundWithVibration(SystemSoundID inSystemSoundID,id arg,NSDictionary* vibratePattern);
+void (*original_AudioServicesPlaySystemSound)(SystemSoundID inSystemSoundID);
+void (*original_AudioServicesPlaySystemSoundWithVibration)(SystemSoundID inSystemSoundID,id arg,NSDictionary* vibratePattern);
 
 void replaced_AudioServicesPlaySystemSound (SystemSoundID sound)
 {
-	if (sound == 1106 && is_disabled(1106)) 
+	if (should_play(sound)) 
 	{
-		NSLog(@"SystemSoundDisabler: Ignoring power sound using 2nd method...");
-	    return;
+		NSLog(@"SystemSoundDisabler: Playing sound %u", (unsigned int)sound);
+		original_AudioServicesPlaySystemSound(sound);
 	}
-	else if (GetTimestampMsec() - absTime < 1500 && is_disabled(1106))
-	{
-		NSLog(@"SystemSoundDisabler: Ignoring power sound (or something like this) using 3nd method...");
-		return;
-	}
-	else if (is_disabled(sound))
-	{
-		NSLog(@"SystemSoundDisabler: Ignoring sound id %u", (unsigned)sound);
-		return;
-	}
+}
 
-	NSLog(@"SystemSoundDisabler: Playing sound %u", (unsigned int)sound);
-	original_AudioServicesPlaySystemSound(sound);
+void replaced_AudioServicesPlaySystemSoundWithVibration(SystemSoundID inSystemSoundID,id arg,NSDictionary* vibratePattern)
+{
+	if (should_play(inSystemSoundID)) 
+	{
+		NSLog(@"SystemSoundDisabler: Playing vibr sound %u", (unsigned int)inSystemSoundID);
+		original_AudioServicesPlaySystemSoundWithVibration(inSystemSoundID, arg, vibratePattern);
+	}
 }
 
 static void ReloadSettings()
@@ -75,14 +71,23 @@ static void ReloadSettings()
 
 static void OnSettingsChangedNotif(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo)
 {
-	    ReloadSettings();
+	NSLog(@"SystemSoundDisabler: Reloading prefs");
+	ReloadSettings();
 }
 
 %ctor
 {
-	//NSLog(@"SystemSoundDisabler: Init");
+	NSLog(@"SystemSoundDisabler: Init");
 	CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, OnSettingsChangedNotif, CFSTR("me.k3a.systemsounddisabler.change"), NULL, CFNotificationSuspensionBehaviorCoalesce);
 	ReloadSettings();
 
-	MSHookFunction((void*)&AudioServicesPlaySystemSound, (void*)replaced_AudioServicesPlaySystemSound, (void**)&original_AudioServicesPlaySystemSound);
+	void* handle = dlopen(0, RTLD_GLOBAL | RTLD_NOW);
+	
+	void* ptr = dlsym(handle, "AudioServicesPlaySystemSound");
+	if (ptr) MSHookFunction(ptr, (void*)replaced_AudioServicesPlaySystemSound, (void**)&original_AudioServicesPlaySystemSound);
+	
+	ptr = dlsym(handle, "AudioServicesPlaySystemSoundWithVibration");
+	if (ptr) MSHookFunction(ptr, (void*)replaced_AudioServicesPlaySystemSoundWithVibration, (void**)&original_AudioServicesPlaySystemSoundWithVibration);
+	
+	dlclose(handle);
 }

@@ -1,7 +1,7 @@
 Package: me.k3a.systemsounddisabler
 Name: SystemSoundDisabler
 Depends: mobilesubstrate, preferenceloader (>= 2.0.4)
-Conflicts: me.k3a.powersounddisabler
+Replaces: me.k3a.powersounddisabler
 Version: 1.2
 Architecture: iphoneos-arm
 Description: A simple MS tweak disabling sound and vibration for several system sounds.
